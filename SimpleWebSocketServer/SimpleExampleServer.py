@@ -3,10 +3,8 @@ The MIT License (MIT)
 Copyright (c) 2013 Dave P.
 '''
 
-import signal
-import sys
-import ssl
-from SimpleWebSocketServer import WebSocket, SimpleWebSocketServer, SimpleSSLWebSocketServer
+import sys, time, signal, ssl
+from SimpleWebSocketServer import WebSocket, SimpleWebSocketServer, SimpleSSLWebSocketServer, WebsocketStatus
 from optparse import OptionParser
 
 class SimpleEcho(WebSocket):
@@ -20,25 +18,33 @@ class SimpleEcho(WebSocket):
    def handleClose(self):
       pass
 
-clients = []
 class SimpleChat(WebSocket):
 
    def handleMessage(self):
-      for client in clients:
-         if client != self:
-            client.sendMessage(self.address[0] + u' - ' + self.data)
+      data = self.data[:-1] if self.data.endswith('\n') else self.data
+      print(f'[{time.strftime("%F %T")}] {self.address[0]}:{self.address[1]} handleMessage {id(self):x} - {data}')
+      for fd, client in self.server.connections.items():
+         if client is self: client.sendMessage(f'[{time.strftime("%F %T")}] <YOU> - {data}\n')
+         else: client.sendMessage(f'[{time.strftime("%F %T")}] {self.address[0]}:{self.address[1]} - {data}\n')
 
    def handleConnected(self):
-      print (self.address, 'connected')
-      for client in clients:
-         client.sendMessage(self.address[0] + u' - connected')
-      clients.append(self)
+      print(f'[{time.strftime("%F %T")}] {self.address} connected {id(self):x}')
+      for fd, client in self.server.connections.items():
+         client.sendMessage(f'[{time.strftime("%F %T")}] {self.address[0]}:{self.address[1]} - connected\n')
 
    def handleClose(self):
-      clients.remove(self)
-      print (self.address, 'closed')
-      for client in clients:
-         client.sendMessage(self.address[0] + u' - disconnected')
+      try:
+         print(f'[{time.strftime("%F %T")}] {self.address[0]}:{self.address[1]} handleClose()')
+         for fd, client in self.server.connections.items():
+            print(self.address, f'[{time.strftime("%F %T")}] {self.address[0]}:{self.address[1]} - sending message to {fd}: {id(client):x}')
+            client.sendMessage(f'[{time.strftime("%F %T")}] {self.address[0]}:{self.address[1]} - disconnected\n')
+         print(f'[{time.strftime("%F %T")}] {self.address[0]}:{self.address[1]} handleClose() done')
+      except Exception as n:
+         print(f'[{time.strftime("%F %T")}] {self.address[0]}:{self.address[1]} handleClose() exception', n)
+
+   def _close(self, status = 1000, reason = u''):
+      print(f'[{time.strftime("%F %T")}] {self.address[0]}:{self.address[1]} close - {status}: "{reason}"')
+      super().close(status, reason)
 
 
 if __name__ == "__main__":
@@ -50,13 +56,14 @@ if __name__ == "__main__":
    parser.add_option("--ssl", default=0, type='int', action="store", dest="ssl", help="ssl (1: on, 0: off (default))")
    parser.add_option("--cert", default='./cert.pem', type='string', action="store", dest="cert", help="cert (./cert.pem)")
    parser.add_option("--key", default='./key.pem', type='string', action="store", dest="key", help="key (./key.pem)")
-   parser.add_option("--ver", default=ssl.PROTOCOL_TLSv1, type=int, action="store", dest="ver", help="ssl version")
+   parser.add_option("--ver", default=ssl.PROTOCOL_TLS_SERVER, type=int, action="store", dest="ver", help="ssl version")
 
    (options, args) = parser.parse_args()
 
-   cls = SimpleEcho
    if options.example == 'chat':
       cls = SimpleChat
+   else:
+      cls = SimpleEcho
 
    if options.ssl == 1:
       server = SimpleSSLWebSocketServer(options.host, options.port, cls, options.cert, options.key, version=options.ver)
@@ -64,7 +71,9 @@ if __name__ == "__main__":
       server = SimpleWebSocketServer(options.host, options.port, cls)
 
    def close_sig_handler(signal, frame):
-      server.close()
+      print()
+      print(f'[{time.strftime("%F %T")}] SIGINT')
+      server.close(WebsocketStatus.going_away, 'SIGINT received')
       sys.exit()
 
    signal.signal(signal.SIGINT, close_sig_handler)
