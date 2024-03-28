@@ -1,0 +1,14 @@
+# ~/.config/systemd/user/simple-websocket-server.service
+
+[Unit]
+Description=A very simple Websocket server
+
+[Service]
+Type=exec
+WorkingDirectory=%h/simple-websocket-server-git
+Environment=PYTHONPATH=.
+ExecStart=python3 SimpleWebSocketServer/SimpleExampleServer.py --example=chat
+PrivateTmp=false
+
+[Install]
+WantedBy=default.target
